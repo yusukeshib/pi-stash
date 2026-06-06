@@ -32,8 +32,11 @@ That's the whole point of `pi-stash`:
 - **Push** the thought the moment it strikes, so you don't lose it or break flow.
 - **Pop** it back into the editor at exactly the moment you want it — not a
   second sooner.
+- **Pick any one, in any order.** Your stash is a menu, not a queue. Pop the
+  third thing first, skip the rest, come back for them later — follow-ups can't
+  do that.
 
-You stay in control of *what* gets said and *when*.
+You stay in control of *what* gets said, *when*, and *in what order*.
 
 ## Install
 
