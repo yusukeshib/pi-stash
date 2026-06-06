@@ -23,7 +23,6 @@
     "snippets",
     "productivity"
   ],
-  "image": "https://raw.githubusercontent.com/yusukeshib/pi-stash/main/assets/demo.png",
   "engines": {
     "node": ">=20"
   },
@@ -36,7 +35,8 @@
   "pi": {
     "extensions": [
       "extensions/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/yusukeshib/pi-stash/main/assets/demo.png"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
