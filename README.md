@@ -41,7 +41,7 @@ You stay in control of *what* gets said, *when*, and *in what order*.
 ## Install
 
 ```bash
-pi install npm:pi-stash
+pi install npm:@yusukeshib/pi-stash
 ```
 
 ## Commands
