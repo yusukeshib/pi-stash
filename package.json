@@ -1,0 +1,53 @@
+{
+  "name": "pi-stash",
+  "version": "0.1.0",
+  "description": "A personal stash of reusable prompt fragments for the Pi coding agent. Push prompts you think of mid-task, then pop them into the editor when you need them.",
+  "type": "module",
+  "license": "MIT",
+  "author": "yusukeshib",
+  "homepage": "https://github.com/yusukeshib/pi-stash#readme",
+  "bugs": {
+    "url": "https://github.com/yusukeshib/pi-stash/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yusukeshib/pi-stash.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "prompt",
+    "stash",
+    "snippets",
+    "productivity"
+  ],
+  "image": "https://raw.githubusercontent.com/yusukeshib/pi-stash/main/assets/demo.png",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "extensions",
+    "assets",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "extensions/index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run typecheck"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  }
+}
