@@ -8,6 +8,33 @@ the ad-hoc, mutable companion to static prompt templates.
 
 ![pi-stash pop menu](./assets/demo.png)
 
+## Why
+
+You're deep in a task and a thought hits you: *"oh, I should also have it rename
+that module"* or *"remember to ask for tests after this."*
+
+What do you do with that thought right now?
+
+- **Queue it as a follow-up?** Too eager — follow-ups fire automatically the
+  moment the current turn ends, whether or not you're ready, and in an order you
+  don't fully control.
+- **Keep it in your head?** You'll forget it the second the agent comes back
+  with something interesting.
+- **Paste it into a scratch file?** Now you're juggling another window.
+
+Sometimes you just want to **park a prompt somewhere** and then **pull it out
+whenever you feel like it** — on your own timing, by hand. Not auto-run, not
+queued the instant the turn ends, just stashed and waiting until *you* decide
+it's time.
+
+That's the whole point of `pi-stash`:
+
+- **Push** the thought the moment it strikes, so you don't lose it or break flow.
+- **Pop** it back into the editor at exactly the moment you want it — not a
+  second sooner.
+
+You stay in control of *what* gets said and *when*.
+
 ## Install
 
 ```bash
