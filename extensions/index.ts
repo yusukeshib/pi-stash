@@ -1,7 +1,7 @@
 /**
- * pi-stash — a personal stash of reusable prompt fragments for the Pi coding
- * agent. Jot a prompt down whenever you think of it, then later pull up the
- * list and pop one into the editor to compose your next message.
+ * pi-stash — a per-session stash of reusable prompt fragments for the Pi
+ * coding agent. Jot a prompt down whenever you think of it, then later pull
+ * up the list and pop one into the editor to compose your next message.
  *
  * Unlike file-based prompt templates (static `/name` commands), this is an
  * ad-hoc, mutable, stack-like backlog you build up by hand during real work.
@@ -12,42 +12,24 @@
  *                  remove it from the stash. Run repeatedly to stack fragments.
  *   /stash-clear   Delete every entry (with confirm).
  *
- * Storage: a single global JSON file, shared across every Pi session on the
- * machine (not per-project, not per-session). Default location:
- *   ~/.pi/agent/prompt-stash.json
- * Override with the PI_STASH_PATH environment variable.
+ * Storage: stash entries are persisted INSIDE the session itself via custom
+ * session entries (`pi.appendEntry`). Each session has its own stash, it
+ * survives restarts/resume, and it follows branching (fork/clone) correctly.
+ *
+ * While the stash is non-empty, a red badge with the entry count is shown in
+ * the footer so you don't forget about pending prompts.
  */
 
-import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 interface StashEntry {
 	text: string;
 	addedAt: number;
 }
 
-const STORE_PATH = process.env.PI_STASH_PATH || join(homedir(), ".pi", "agent", "prompt-stash.json");
+const CUSTOM_TYPE = "pi-stash-state";
+const STATUS_KEY = "pi-stash";
 const PREVIEW_LEN = 72;
-
-function load(): StashEntry[] {
-	try {
-		const raw = readFileSync(STORE_PATH, "utf8");
-		const parsed = JSON.parse(raw);
-		if (Array.isArray(parsed)) {
-			return parsed.filter((e): e is StashEntry => e && typeof e.text === "string");
-		}
-	} catch {
-		// missing or corrupt → empty stash
-	}
-	return [];
-}
-
-function save(entries: StashEntry[]): void {
-	mkdirSync(dirname(STORE_PATH), { recursive: true });
-	writeFileSync(STORE_PATH, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
-}
 
 /** One-line, length-bounded preview for select menus. */
 function preview(text: string, index: number): string {
@@ -58,6 +40,39 @@ function preview(text: string, index: number): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	// In-memory stash for the current session; persisted as custom entries.
+	let entries: StashEntry[] = [];
+
+	function persist(): void {
+		pi.appendEntry(CUSTOM_TYPE, { entries });
+	}
+
+	/** Red, hard-to-miss footer badge while the stash is non-empty. */
+	function updateStatus(ctx: ExtensionContext): void {
+		if (entries.length > 0) {
+			// White on red background (raw ANSI so it stays red in any theme).
+			ctx.ui.setStatus(STATUS_KEY, `\x1b[41m\x1b[97m\x1b[1m stash:${entries.length} \x1b[0m`);
+		} else {
+			ctx.ui.setStatus(STATUS_KEY, undefined);
+		}
+	}
+
+	// Restore stash from the session (last persisted state on the active path).
+	pi.on("session_start", async (_event, ctx) => {
+		entries = [];
+		for (const entry of ctx.sessionManager.getEntries()) {
+			if (entry.type === "custom" && entry.customType === CUSTOM_TYPE) {
+				const data = entry.data as { entries?: unknown } | undefined;
+				if (data && Array.isArray(data.entries)) {
+					entries = data.entries.filter(
+						(e): e is StashEntry => !!e && typeof (e as StashEntry).text === "string",
+					);
+				}
+			}
+		}
+		updateStatus(ctx);
+	});
+
 	pi.registerCommand("stash", {
 		description: "Push text (with arg) or pop an entry into the editor (no arg)",
 		handler: async (args, ctx) => {
@@ -65,19 +80,18 @@ export default function (pi: ExtensionAPI) {
 
 			// PUSH: /stash <text>
 			if (text) {
-				const entries = load();
 				if (entries.some((e) => e.text === text)) {
 					ctx.ui.notify("Already in stash", "info");
 					return;
 				}
 				entries.push({ text, addedAt: Date.now() });
-				save(entries);
+				persist();
+				updateStatus(ctx);
 				ctx.ui.notify(`Stashed (${entries.length} total)`, "info");
 				return;
 			}
 
 			// POP: /stash → pick, insert into editor, remove from stash
-			const entries = load();
 			if (entries.length === 0) {
 				ctx.ui.notify("Stash is empty. Add one with /stash <text>", "info");
 				return;
@@ -95,21 +109,23 @@ export default function (pi: ExtensionAPI) {
 
 			// pop = remove the chosen entry
 			entries.splice(idx, 1);
-			save(entries);
+			persist();
+			updateStatus(ctx);
 		},
 	});
 
 	pi.registerCommand("stash-clear", {
-		description: "Delete every stashed prompt",
+		description: "Delete every stashed prompt in this session",
 		handler: async (_args, ctx) => {
-			const entries = load();
 			if (entries.length === 0) {
 				ctx.ui.notify("Stash is already empty", "info");
 				return;
 			}
 			const ok = await ctx.ui.confirm("Clear the entire stash?", `${entries.length} entries will be deleted`);
 			if (!ok) return;
-			save([]);
+			entries = [];
+			persist();
+			updateStatus(ctx);
 			ctx.ui.notify("Stash cleared", "info");
 		},
 	});

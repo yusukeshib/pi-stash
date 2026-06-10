@@ -1,6 +1,6 @@
 # pi-stash
 
-A personal stash of reusable prompt fragments for the [Pi coding agent](https://pi.dev).
+A per-session stash of reusable prompt fragments for the [Pi coding agent](https://pi.dev).
 
 Jot a prompt down whenever you think of it mid-task, then pop it into the editor
 when you actually need it. Think of it as a stack-like scratchpad for prompts —
@@ -50,7 +50,10 @@ pi install npm:@yusukeshib/pi-stash
 |---------|--------|
 | `/stash <text>` | **Push** — save the given text onto the stash. |
 | `/stash` | **Pop** — pick a saved entry, insert it into the editor, and remove it from the stash. Run repeatedly to stack several fragments together. |
-| `/stash-clear` | Delete every stashed entry (with confirm). |
+| `/stash-clear` | Delete every stashed entry in this session (with confirm). |
+
+While the stash is non-empty, a red `stash:N` badge is shown in the footer so
+you never forget you have prompts parked.
 
 ## How it works
 
@@ -65,21 +68,13 @@ build up by hand during real work:
 
 ## Storage
 
-Entries live in a single global JSON file, **shared across every Pi session on
-the machine** (not per-project, not per-session):
+Entries are stored **inside the session itself** as custom session entries —
+each Pi session has its own independent stash. It survives restarts and
+`/resume`, and follows branching (`/fork`, `/clone`) correctly: a forked
+session sees the stash as it was at the fork point.
 
-```
-~/.pi/agent/prompt-stash.json
-```
-
-Override the location with the `PI_STASH_PATH` environment variable:
-
-```bash
-export PI_STASH_PATH="$HOME/.config/pi/stash.json"
-```
-
-> Note: the store is read-modify-written on each command. If two sessions edit
-> the stash at the exact same moment, the last write wins.
+Nothing is written outside the session file, and the stash does not
+participate in the LLM context.
 
 ## License
 
