@@ -13,7 +13,7 @@
  *   /stash-clear   Delete every entry (with confirm).
  *
  * Shortcut:
- *   Ctrl+S         If the editor holds text, push it onto the stash (and clear
+ *   Alt+S          If the editor holds text, push it onto the stash (and clear
  *                  the editor); otherwise pop a saved entry into the editor.
  *                  A one-key way to park the prompt you're typing, or pull one
  *                  back, without typing `/stash`.
@@ -80,7 +80,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	/**
-	 * Core stash behaviour shared by the `/stash` command and the Ctrl+S
+	 * Core stash behaviour shared by the `/stash` command and the Alt+S
 	 * shortcut. With text → push; without text → pop into the editor.
 	 */
 	async function runStash(rawText: string, ctx: ExtensionContext): Promise<void> {
@@ -128,9 +128,9 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Ctrl+S → same as bare `/stash`: pop an entry into the editor. If the
+	// Alt+S → same as bare `/stash`: pop an entry into the editor. If the
 	// editor already holds text, push it onto the stash instead.
-	pi.registerShortcut("ctrl+s", {
+	pi.registerShortcut("alt+s", {
 		description: "Stash: push editor text, or pop a saved prompt",
 		handler: async (ctx) => {
 			const editorText = (ctx.ui.getEditorText() ?? "").trim();
