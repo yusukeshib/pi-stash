@@ -12,6 +12,12 @@
  *                  remove it from the stash. Run repeatedly to stack fragments.
  *   /stash-clear   Delete every entry (with confirm).
  *
+ * Shortcut:
+ *   Ctrl+S         If the editor holds text, push it onto the stash (and clear
+ *                  the editor); otherwise pop a saved entry into the editor.
+ *                  A one-key way to park the prompt you're typing, or pull one
+ *                  back, without typing `/stash`.
+ *
  * Storage: stash entries are persisted INSIDE the session itself via custom
  * session entries (`pi.appendEntry`). Each session has its own stash, it
  * survives restarts/resume, and it follows branching (fork/clone) correctly.
@@ -73,44 +79,67 @@ export default function (pi: ExtensionAPI) {
 		updateStatus(ctx);
 	});
 
+	/**
+	 * Core stash behaviour shared by the `/stash` command and the Ctrl+S
+	 * shortcut. With text → push; without text → pop into the editor.
+	 */
+	async function runStash(rawText: string, ctx: ExtensionContext): Promise<void> {
+		const text = (rawText ?? "").trim();
+
+		// PUSH: /stash <text>
+		if (text) {
+			if (entries.some((e) => e.text === text)) {
+				ctx.ui.notify("Already in stash", "info");
+				return;
+			}
+			entries.push({ text, addedAt: Date.now() });
+			persist();
+			updateStatus(ctx);
+			ctx.ui.notify(`Stashed (${entries.length} total)`, "info");
+			return;
+		}
+
+		// POP: /stash → pick, insert into editor, remove from stash
+		if (entries.length === 0) {
+			ctx.ui.notify("Stash is empty. Add one with /stash <text>", "info");
+			return;
+		}
+		const labels = entries.map((e, i) => preview(e.text, i));
+		const choice = await ctx.ui.select("Pop prompt:", labels);
+		if (choice === undefined) return; // cancelled / timed out
+		const idx = labels.indexOf(choice);
+		if (idx < 0) return;
+
+		const chosen = entries[idx].text;
+		const current = ctx.ui.getEditorText() ?? "";
+		const next = current.trim().length > 0 ? `${current}\n${chosen}` : chosen;
+		ctx.ui.setEditorText(next);
+
+		// pop = remove the chosen entry
+		entries.splice(idx, 1);
+		persist();
+		updateStatus(ctx);
+	}
+
 	pi.registerCommand("stash", {
 		description: "Push text (with arg) or pop an entry into the editor (no arg)",
 		handler: async (args, ctx) => {
-			const text = (args ?? "").trim();
+			await runStash(args ?? "", ctx);
+		},
+	});
 
-			// PUSH: /stash <text>
-			if (text) {
-				if (entries.some((e) => e.text === text)) {
-					ctx.ui.notify("Already in stash", "info");
-					return;
-				}
-				entries.push({ text, addedAt: Date.now() });
-				persist();
-				updateStatus(ctx);
-				ctx.ui.notify(`Stashed (${entries.length} total)`, "info");
-				return;
+	// Ctrl+S → same as bare `/stash`: pop an entry into the editor. If the
+	// editor already holds text, push it onto the stash instead.
+	pi.registerShortcut("ctrl+s", {
+		description: "Stash: push editor text, or pop a saved prompt",
+		handler: async (ctx) => {
+			const editorText = (ctx.ui.getEditorText() ?? "").trim();
+			if (editorText) {
+				ctx.ui.setEditorText("");
+				await runStash(editorText, ctx);
+			} else {
+				await runStash("", ctx);
 			}
-
-			// POP: /stash → pick, insert into editor, remove from stash
-			if (entries.length === 0) {
-				ctx.ui.notify("Stash is empty. Add one with /stash <text>", "info");
-				return;
-			}
-			const labels = entries.map((e, i) => preview(e.text, i));
-			const choice = await ctx.ui.select("Pop prompt:", labels);
-			if (choice === undefined) return; // cancelled / timed out
-			const idx = labels.indexOf(choice);
-			if (idx < 0) return;
-
-			const chosen = entries[idx].text;
-			const current = ctx.ui.getEditorText() ?? "";
-			const next = current.trim().length > 0 ? `${current}\n${chosen}` : chosen;
-			ctx.ui.setEditorText(next);
-
-			// pop = remove the chosen entry
-			entries.splice(idx, 1);
-			persist();
-			updateStatus(ctx);
 		},
 	});
 

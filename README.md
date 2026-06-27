@@ -52,6 +52,16 @@ pi install npm:@yusukeshib/pi-stash
 | `/stash` | **Pop** — pick a saved entry, insert it into the editor, and remove it from the stash. Run repeatedly to stack several fragments together. |
 | `/stash-clear` | Delete every stashed entry in this session (with confirm). |
 
+### Shortcut
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+S` | If the editor has text, **push** it onto the stash and clear the editor. If the editor is empty, **pop** a saved entry into it. |
+
+`Ctrl+S` is the one-key way to do what `/stash` does: park the prompt you're
+halfway through typing, or pull one back — without typing the command. Rebind it
+in `~/.pi/agent/keybindings.json` if it clashes with another shortcut.
+
 While the stash is non-empty, a red `stash:N` badge is shown in the footer so
 you never forget you have prompts parked.
 
