@@ -18,14 +18,17 @@
  *                  A one-key way to park the prompt you're typing, or pull one
  *                  back, without typing `/stash`.
  *
- * Storage: stash entries are persisted INSIDE the session itself via custom
- * session entries (`pi.appendEntry`). Each session has its own stash, it
- * survives restarts/resume, and it follows branching (fork/clone) correctly.
+ * Storage: each change is written to a per-session backup and recorded via
+ * `pi.appendEntry` for branch history. Resuming the same saved session restores
+ * its stash; branches and forks use their own active path.
  *
  * While the stash is non-empty, a red badge with the entry count is shown in
  * the footer so you don't forget about pending prompts.
  */
 
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 interface StashEntry {
@@ -37,6 +40,58 @@ const CUSTOM_TYPE = "pi-stash-state";
 const STATUS_KEY = "pi-stash";
 const PREVIEW_LEN = 72;
 
+interface Checkpoint {
+	version: 1;
+	sessionId: string;
+	sessionFile: string;
+	parentId: string | null;
+	entryId: string | null;
+	entries: StashEntry[];
+}
+
+function checkpointPath(ctx: ExtensionContext): string {
+	return join(ctx.sessionManager.getSessionDir(), "pi-stash", `${ctx.sessionManager.getSessionId()}.json`);
+}
+
+function readCheckpoint(ctx: ExtensionContext): Checkpoint | undefined {
+	let raw: string;
+	try {
+		raw = readFileSync(checkpointPath(ctx), "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		ctx.ui.notify(`Could not read stash backup: ${String(error)}`, "error");
+		return undefined;
+	}
+	try {
+		const value = JSON.parse(raw) as Checkpoint;
+		if (
+			value.version !== 1 || value.sessionId !== ctx.sessionManager.getSessionId() ||
+			typeof value.sessionFile !== "string" ||
+			!(value.parentId === null || typeof value.parentId === "string") ||
+			!(value.entryId === null || typeof value.entryId === "string") ||
+			!Array.isArray(value.entries) ||
+			!value.entries.every((e) => e && typeof e.text === "string" && typeof e.addedAt === "number")
+		) throw new Error("Invalid stash backup");
+		return value;
+	} catch (error) {
+		ctx.ui.notify(`Could not parse stash backup: ${String(error)}`, "error");
+		return undefined;
+	}
+}
+
+function writeCheckpoint(ctx: ExtensionContext, checkpoint: Checkpoint): void {
+	const path = checkpointPath(ctx);
+	mkdirSync(join(ctx.sessionManager.getSessionDir(), "pi-stash"), { recursive: true, mode: 0o700 });
+	const temp = `${path}.${randomUUID()}.tmp`;
+	try {
+		writeFileSync(temp, JSON.stringify(checkpoint), { flag: "wx", mode: 0o600 });
+		renameSync(temp, path);
+	} catch (error) {
+		try { unlinkSync(temp); } catch { /* Nothing to clean up if creation failed. */ }
+		throw error;
+	}
+}
+
 /** One-line, length-bounded preview for select menus. */
 function preview(text: string, index: number): string {
 	const oneLine = text.replace(/\s+/g, " ").trim();
@@ -46,11 +101,50 @@ function preview(text: string, index: number): string {
 }
 
 export default function (pi: ExtensionAPI) {
-	// In-memory stash for the current session; persisted as custom entries.
+	// In-memory stash for the current session; persisted as custom entries and a disk checkpoint.
 	let entries: StashEntry[] = [];
 
-	function persist(): void {
-		pi.appendEntry(CUSTOM_TYPE, { entries });
+	function persist(next: StashEntry[], ctx: ExtensionContext): boolean {
+		const parentId = ctx.sessionManager.getLeafId();
+		const checkpoint: Checkpoint = {
+			version: 1,
+			sessionId: ctx.sessionManager.getSessionId(),
+			sessionFile: ctx.sessionManager.getSessionFile() ?? "",
+			parentId,
+			entryId: null,
+			entries: next,
+		};
+		if (ctx.sessionManager.getSessionFile()) {
+			try {
+				// Write first: a new Pi session may not have flushed its custom entries yet.
+				writeCheckpoint(ctx, checkpoint);
+			} catch (error) {
+				ctx.ui.notify(`Could not save stash backup: ${String(error)}`, "error");
+				return false;
+			}
+		}
+		let appended = false;
+		try {
+			pi.appendEntry(CUSTOM_TYPE, { entries: next });
+			appended = true;
+		} catch (error) {
+			if (!ctx.sessionManager.getSessionFile()) {
+				ctx.ui.notify(`Could not save stash: ${String(error)}`, "error");
+				return false;
+			}
+			ctx.ui.notify(`Stash backed up, but session entry failed: ${String(error)}`, "error");
+		}
+		entries = next;
+		updateStatus(ctx);
+		if (appended && ctx.sessionManager.getSessionFile()) {
+			try {
+				writeCheckpoint(ctx, { ...checkpoint, entryId: ctx.sessionManager.getLeafId() });
+			} catch (error) {
+				// The first write already saved the state, even if this link update fails.
+				ctx.ui.notify(`Stash backed up, but checkpoint update failed: ${String(error)}`, "error");
+			}
+		}
+		return true;
 	}
 
 	/** Red, hard-to-miss footer badge while the stash is non-empty. */
@@ -63,62 +157,82 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	// Restore stash from the session (last persisted state on the active path).
-	pi.on("session_start", async (_event, ctx) => {
+	// Restore the latest snapshot on this branch; a checkpoint cannot leak into another branch.
+	function restore(ctx: ExtensionContext): void {
 		entries = [];
-		for (const entry of ctx.sessionManager.getEntries()) {
+		const branch = ctx.sessionManager.getBranch();
+		let snapshotIndex = -1;
+		for (const [index, entry] of branch.entries()) {
 			if (entry.type === "custom" && entry.customType === CUSTOM_TYPE) {
 				const data = entry.data as { entries?: unknown } | undefined;
 				if (data && Array.isArray(data.entries)) {
 					entries = data.entries.filter(
 						(e): e is StashEntry => !!e && typeof (e as StashEntry).text === "string",
 					);
+					snapshotIndex = index;
 				}
 			}
 		}
+		const checkpoint = ctx.sessionManager.getSessionFile() ? readCheckpoint(ctx) : undefined;
+		if (checkpoint) {
+			const checkpointIndex = branch.findIndex((entry) => entry.id === checkpoint.entryId);
+			const freshSameId = checkpoint.sessionFile !== ctx.sessionManager.getSessionFile() &&
+				branch.every((entry) =>
+					entry.type === "model_change" || entry.type === "thinking_level_change" || entry.type === "session_info"
+				);
+			if (checkpointIndex >= snapshotIndex && checkpointIndex >= 0) {
+				entries = checkpoint.entries;
+			} else if (
+				checkpointIndex < 0 &&
+				(checkpoint.entryId === null || !ctx.sessionManager.getEntry(checkpoint.entryId)) &&
+				((branch.at(-1)?.id ?? null) === checkpoint.parentId || freshSameId)
+			) {
+				// Recover a missing entry or an unflushed session reopened with the same explicit ID.
+				entries = checkpoint.entries;
+			}
+		}
 		updateStatus(ctx);
-	});
+	}
+
+	pi.on("session_start", async (_event, ctx) => restore(ctx));
+	pi.on("session_tree", async (_event, ctx) => restore(ctx));
 
 	/**
 	 * Core stash behaviour shared by the `/stash` command and the Alt+S
 	 * shortcut. With text → push; without text → pop into the editor.
 	 */
-	async function runStash(rawText: string, ctx: ExtensionContext): Promise<void> {
+	async function runStash(rawText: string, ctx: ExtensionContext): Promise<boolean> {
 		const text = (rawText ?? "").trim();
 
 		// PUSH: /stash <text>
 		if (text) {
 			if (entries.some((e) => e.text === text)) {
 				ctx.ui.notify("Already in stash", "info");
-				return;
+				return false;
 			}
-			entries.push({ text, addedAt: Date.now() });
-			persist();
-			updateStatus(ctx);
+			if (!persist([...entries, { text, addedAt: Date.now() }], ctx)) return false;
 			ctx.ui.notify(`Stashed (${entries.length} total)`, "info");
-			return;
+			return true;
 		}
 
 		// POP: /stash → pick, insert into editor, remove from stash
 		if (entries.length === 0) {
 			ctx.ui.notify("Stash is empty. Add one with /stash <text>", "info");
-			return;
+			return false;
 		}
 		const labels = entries.map((e, i) => preview(e.text, i));
 		const choice = await ctx.ui.select("Pop prompt:", labels);
-		if (choice === undefined) return; // cancelled / timed out
+		if (choice === undefined) return false; // cancelled / timed out
 		const idx = labels.indexOf(choice);
-		if (idx < 0) return;
+		if (idx < 0) return false;
 
 		const chosen = entries[idx].text;
 		const current = ctx.ui.getEditorText() ?? "";
 		const next = current.trim().length > 0 ? `${current}\n${chosen}` : chosen;
+		// Do not remove the entry unless the new state was saved.
+		if (!persist(entries.filter((_, i) => i !== idx), ctx)) return false;
 		ctx.ui.setEditorText(next);
-
-		// pop = remove the chosen entry
-		entries.splice(idx, 1);
-		persist();
-		updateStatus(ctx);
+		return true;
 	}
 
 	pi.registerCommand("stash", {
@@ -135,8 +249,7 @@ export default function (pi: ExtensionAPI) {
 		handler: async (ctx) => {
 			const editorText = (ctx.ui.getEditorText() ?? "").trim();
 			if (editorText) {
-				ctx.ui.setEditorText("");
-				await runStash(editorText, ctx);
+				if (await runStash(editorText, ctx)) ctx.ui.setEditorText("");
 			} else {
 				await runStash("", ctx);
 			}
@@ -152,10 +265,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			const ok = await ctx.ui.confirm("Clear the entire stash?", `${entries.length} entries will be deleted`);
 			if (!ok) return;
-			entries = [];
-			persist();
-			updateStatus(ctx);
-			ctx.ui.notify("Stash cleared", "info");
+			if (persist([], ctx)) ctx.ui.notify("Stash cleared", "info");
 		},
 	});
 }

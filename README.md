@@ -78,13 +78,23 @@ build up by hand during real work:
 
 ## Storage
 
-Entries are stored **inside the session itself** as custom session entries —
-each Pi session has its own independent stash. It survives restarts and
-`/resume`, and follows branching (`/fork`, `/clone`) correctly: a forked
-session sees the stash as it was at the fork point.
+Each change (push, pop, or clear) is recorded as a custom session entry **and**
+written immediately to an atomic per-session backup at
+`<session-dir>/pi-stash/<session-id>.json`. The backup contains the prompt text;
+protect your session directory accordingly. On restart, the stash is restored
+for that **same** session (`pi --continue`, `pi --resume`, or `/resume`). A plain
+`pi` starts a new, empty session. Branching (`/tree`, `/fork`, `/clone`) uses
+the stash state on the selected branch or fork point, not another branch's
+backup. The stash does not participate in the LLM context.
 
-Nothing is written outside the session file, and the stash does not
-participate in the LLM context.
+Pi does not write a *new session file* until the first assistant response.
+Before then, the backup is written, but `pi --continue`/`--resume` cannot
+find that unsaved session after Pi exits. If you used an explicit `--session-id`,
+restarting with the **same ID** can recover the backup; otherwise use an
+existing saved session if you need ordinary resume. `--no-session` is likewise not resumable. Backups
+are scoped to session IDs; they are not shared between sessions. Removing a
+session file does not automatically remove its backup; delete the matching
+`<session-id>.json` if you no longer want it stored.
 
 ## License
 
