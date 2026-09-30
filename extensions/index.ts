@@ -29,7 +29,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, SelectList, Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 interface StashEntry {
 	text: string;
@@ -96,7 +97,7 @@ function writeCheckpoint(ctx: ExtensionContext, checkpoint: Checkpoint): void {
 function preview(text: string, index: number): string {
 	const oneLine = text.replace(/\s+/g, " ").trim();
 	const body = oneLine.length > PREVIEW_LEN ? `${oneLine.slice(0, PREVIEW_LEN - 1)}…` : oneLine;
-	// Number prefix keeps labels unique so indexOf() round-trips reliably.
+	// Number prefix makes each entry identifiable in the menu.
 	return `${String(index + 1).padStart(2, " ")}. ${body}`;
 }
 
@@ -221,10 +222,43 @@ export default function (pi: ExtensionAPI) {
 			return false;
 		}
 		const labels = entries.map((e, i) => preview(e.text, i));
-		const choice = await ctx.ui.select("Pop prompt:", labels);
-		if (choice === undefined) return false; // cancelled / timed out
-		const idx = labels.indexOf(choice);
-		if (idx < 0) return false;
+		let idx: number;
+		if (ctx.mode === "tui") {
+			const selected = await ctx.ui.custom<number | undefined>((tui, theme, _keys, done) => {
+				const container = new Container();
+				container.addChild(new DynamicBorder((line) => theme.fg("muted", line)));
+				container.addChild(new Text(theme.fg("text", theme.bold("Pop prompt:")), 1, 0));
+				const list = new SelectList(labels.map((label, i) => ({ value: String(i), label })), 10, {
+					selectedPrefix: (text) => theme.fg("text", text),
+					selectedText: (text) => theme.fg("text", text),
+					description: (text) => theme.fg("muted", text),
+					scrollInfo: (text) => theme.fg("muted", text),
+					noMatch: (text) => theme.fg("muted", text),
+				}, {
+					truncatePrimary: ({ text, maxWidth, isSelected }) => {
+						const truncated = truncateToWidth(text, maxWidth, "");
+						return isSelected ? truncated : theme.fg("muted", truncated);
+					},
+				});
+				list.onSelect = (item) => done(Number(item.value));
+				list.onCancel = () => done(undefined);
+				container.addChild(list);
+				container.addChild(new Text(theme.fg("dim", "↑↓ navigate  enter select  escape/ctrl+c cancel"), 1, 0));
+				container.addChild(new DynamicBorder((line) => theme.fg("muted", line)));
+				return {
+					render: (width) => container.render(width),
+					invalidate: () => container.invalidate(),
+					handleInput: (data) => { list.handleInput(data); tui.requestRender(); },
+				};
+			});
+			if (selected === undefined) return false;
+			idx = selected;
+		} else {
+			const choice = await ctx.ui.select("Pop prompt:", labels);
+			if (choice === undefined) return false; // cancelled / timed out
+			idx = labels.indexOf(choice);
+			if (idx < 0) return false;
+		}
 
 		const chosen = entries[idx].text;
 		const current = ctx.ui.getEditorText() ?? "";
