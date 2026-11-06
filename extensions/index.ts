@@ -202,19 +202,25 @@ export default function (pi: ExtensionAPI) {
 	 * Core stash behaviour shared by the `/stash` command and the Alt+S
 	 * shortcut. With text → push; without text → pop into the editor.
 	 */
+	/**
+	 * Push is synchronous on purpose: the Alt+S handler must clear the editor
+	 * in the same tick as the key press, before the TUI's post-input render.
+	 */
+	function pushStash(text: string, ctx: ExtensionContext): boolean {
+		if (entries.some((e) => e.text === text)) {
+			ctx.ui.notify("Already in stash", "info");
+			return false;
+		}
+		if (!persist([...entries, { text, addedAt: Date.now() }], ctx)) return false;
+		ctx.ui.notify(`Stashed (${entries.length} total)`, "info");
+		return true;
+	}
+
 	async function runStash(rawText: string, ctx: ExtensionContext): Promise<boolean> {
 		const text = (rawText ?? "").trim();
 
 		// PUSH: /stash <text>
-		if (text) {
-			if (entries.some((e) => e.text === text)) {
-				ctx.ui.notify("Already in stash", "info");
-				return false;
-			}
-			if (!persist([...entries, { text, addedAt: Date.now() }], ctx)) return false;
-			ctx.ui.notify(`Stashed (${entries.length} total)`, "info");
-			return true;
-		}
+		if (text) return pushStash(text, ctx);
 
 		// POP: /stash → pick, insert into editor, remove from stash
 		if (entries.length === 0) {
@@ -283,7 +289,8 @@ export default function (pi: ExtensionAPI) {
 		handler: async (ctx) => {
 			const editorText = (ctx.ui.getEditorText() ?? "").trim();
 			if (editorText) {
-				if (await runStash(editorText, ctx)) ctx.ui.setEditorText("");
+				// No await here: an awaited clear lands after the input render and stays stale on screen.
+				if (pushStash(editorText, ctx)) ctx.ui.setEditorText("");
 			} else {
 				await runStash("", ctx);
 			}
